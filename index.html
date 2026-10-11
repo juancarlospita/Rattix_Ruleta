@@ -406,7 +406,11 @@ $("cb").onclick = async () => {
   bt.onclick = async () => { const { error } = await sb.from("plays").update({redeemed_at:new Date().toISOString()}).eq("id",data.id); out.textContent = error ? "No se pudo guardar" : "Entregado"; $("cd").value = "" };
   out.append(bt);
 };
-async function openDash(){ $("login").classList.add("hidden"); $("dash").classList.remove("hidden"); refreshAdmin(); loadEditor(); setInterval(refreshAdmin, 15000) }
+const VERSION = "v4 · premios editables";
+async function openDash(){
+  $("login").classList.add("hidden"); $("dash").classList.remove("hidden"); refreshAdmin(); loadEditor(); setInterval(refreshAdmin, 15000);
+  if(!document.getElementById("ver")){ const v = document.createElement("p"); v.id = "ver"; v.className = "fine"; v.textContent = "Versión del panel: " + VERSION; document.querySelector(".admwrap").append(v) }
+}
 $("lb").onclick = async () => {
   const { error } = await sb.auth.signInWithPassword({ email:$("ae").value.trim(), password:$("ap").value });
   if(error){ $("lm").textContent = "Email o contraseña incorrectos"; $("lm").classList.remove("hidden"); return }
