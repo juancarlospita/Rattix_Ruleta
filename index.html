@@ -91,6 +91,10 @@ a{color:#fff;text-decoration:underline}
 .admwrap{padding:0 16px 30px}
 .tbanner{position:fixed;top:0;left:0;right:0;z-index:60;background:#F70457;color:#fff;text-align:center;font-weight:800;font-size:13px;padding:6px 10px}
 body.test{padding-top:32px}
+.otph{font-weight:900;font-size:1.7rem;margin:6px 0 8px}
+.otpi{font-size:30px;letter-spacing:.35em;text-align:center;font-weight:800}
+#otpch .btn{margin-top:10px}
+#otpcode .btn{margin-top:10px}
 @media(prefers-reduced-motion:reduce){.beat .ih,.spinning .pin{animation:none}.rim canvas{transition-duration:.01s}}
 </style>
 </head>
@@ -126,6 +130,19 @@ body.test{padding-top:32px}
         <div class="e hidden" id="gen" style="text-align:center;margin-top:10px"></div>
         <p class="fine">Una partida por persona: el email y el teléfono no pueden repetirse.</p>
       </div>
+      <div id="otp" class="hidden" role="group" aria-label="Verificación del teléfono">
+        <h2 class="otph">Verifica tu teléfono</h2>
+        <p id="otpmsg"></p>
+        <div id="otpch"></div>
+        <div class="e hidden" id="oe" style="margin-top:12px"></div>
+        <div id="otpcode" class="hidden">
+          <label class="l" for="oc" style="margin-top:6px">Código de 6 dígitos</label>
+          <input class="i otpi" id="oc" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="······">
+          <button type="button" class="btn" id="ov">Verificar y jugar</button>
+          <button type="button" class="btn ghost" id="orx" disabled>Reenviar código</button>
+        </div>
+        <button type="button" class="btn ghost" id="oback" style="margin-top:14px">Cambiar mis datos</button>
+      </div>
       <div class="play hidden" id="game">
         <h2 id="gh">¡Es tu turno!</h2>
         <div class="rim" id="rim"><i class="pin" data-heart></i><canvas id="wheel" width="680" height="680"></canvas></div>
@@ -148,6 +165,8 @@ body.test{padding-top:32px}
   </div>
   <div id="dash" class="hidden">
     <div class="panel" style="margin-top:22px"><div class="num" id="aPlayed">0</div><div class="h"><span>personas han jugado · </span><b id="aWins">0</b> con premio</div></div>
+    <div class="panel"><b>Verificación del teléfono</b>
+      <div class="row" style="border:0"><span id="vtxt">Comprobando…</span><button class="btn sm" id="vbtn" type="button">…</button></div></div>
     <div class="panel"><b>Canjear premio</b>
       <div class="f" style="margin:10px 0"><input class="i" id="cd" placeholder="Código de 5 caracteres" maxlength="5" autocapitalize="characters" style="text-transform:uppercase;letter-spacing:.1em"></div>
       <button class="btn" id="cb">Buscar código</button>
@@ -176,7 +195,7 @@ const PRIVACY_URL = "https://www.rattix.es/politica-de-privacidad";
 const MARKETING_OBLIGATORIO = true;  /* true = hay que marcar la casilla de ofertas para jugar (revisa el aviso legal) */
 const IG_USER = "rattix_es";   /* sin @ · tu cuenta de Instagram */
 const MODO_PRUEBA = true;           /* true = MODO PRUEBA: puedes jugar todas las veces que quieras (pon false antes de publicar) */
-const KIOSCO = true;                /* true = muestra "Registrar a otra persona" (solo para una tablet compartida en el stand) */
+const KIOSCO = true;             /* true = muestra "Registrar a otra persona" (solo para una tablet compartida en el stand) */
 /* Los premios y su stock se editan en la tabla "segments" de Supabase */
 /* ============================ */
 
@@ -326,7 +345,7 @@ function secPanel(){
 
 /* pinta la pantalla de juego según el estado guardado */
 function ui(fx){
-  $("ff").classList.add("hidden"); $("game").classList.remove("hidden"); $("reg").classList.add("playing");
+  $("ff").classList.add("hidden"); $("game").classList.remove("hidden"); $("otp").classList.add("hidden"); $("reg").classList.add("playing");
   current = ST.spun ? null : ST.res;
   $("spin").classList.toggle("hidden", !current);
   $("gh").textContent = !ST.spun ? "¡Es tu turno!" : (ST.res.win ? "¡Premio!" : "Gracias por jugar");
@@ -374,19 +393,83 @@ $("f").addEventListener("submit", async ev => {
     args.p_email = args.p_email.replace("@", "+p" + rndDigits(6) + "@");
     args.p_phone = "+346" + rndDigits(8);
   }
+  const verif = (await sb.rpc("verificacion_activa")).data === true;
+  if(verif){
+    const chk = await sb.rpc("puede_jugar", {p_email: args.p_email, p_phone: args.p_phone});   /* antes de gastar un SMS */
+    b.disabled = false; b.textContent = "Quiero jugar";
+    if(chk.data && chk.data.ok === false) return marcarDuplicado(chk.data.motivo === "telefono");
+    PEND = args; return showOtp();
+  }
+  await jugar(args, false);
+});
+
+function marcarDuplicado(ph){
+  const g = ph ? "gt" : "ge";
+  setErr(g, ph ? "Este teléfono ya ha jugado" : "Este email ya ha jugado");
+  $(g).scrollIntoView({behavior:"smooth",block:"center"});
+}
+async function jugar(args, conSesion){
+  const b = $("b");
   const { data, error } = await sb.rpc("registrar_y_jugar", args);
   b.disabled = false; b.textContent = "Quiero jugar";
   if(!error && data){
+    if(conSesion) sb.auth.signOut();
     ST = {res:data, spun:false}; save(); return ui();
   }
-  if(error && error.code === "23505"){
-    const ph = /phone/.test(error.message), g = ph ? "gt" : "ge";
-    setErr(g, ph ? "Este teléfono ya ha jugado" : "Este email ya ha jugado");
-    $(g).scrollIntoView({behavior:"smooth",block:"center"}); return;
-  }
-  $("gen").textContent = "No hemos podido preparar tu partida. Inténtalo de nuevo o avisa al equipo.";
+  $("otp").classList.add("hidden"); $("ff").classList.remove("hidden");
+  if(error && error.code === "23505") return marcarDuplicado(/phone/.test(error.message));
+  $("gen").textContent = /telefono_no_verificado/.test((error && error.message) || "")
+    ? "No hemos podido verificar tu teléfono. Recarga la página e inténtalo de nuevo."
+    : "No hemos podido preparar tu partida. Inténtalo de nuevo o avisa al equipo.";
   $("gen").classList.remove("hidden");
-});
+}
+
+/* ---------- Verificación del teléfono (SMS / WhatsApp) ---------- */
+let PEND = null, OTPC = "sms", cdT = null;
+const CH = {sms:"SMS", whatsapp:"WhatsApp"};
+const maskPhone = p => p.slice(0,3) + " ••• •• " + p.slice(-2);
+function showOtp(){
+  $("ff").classList.add("hidden"); $("otp").classList.remove("hidden");
+  $("otpcode").classList.add("hidden"); $("oe").classList.add("hidden"); $("oc").value = "";
+  $("otpmsg").textContent = "Vamos a comprobar que " + maskPhone(PEND.p_phone) + " es tu número real.";
+  const box = $("otpch"); box.innerHTML = "";
+  if(CANALES_OTP.length === 1){ sendOtp(CANALES_OTP[0]); return }
+  CANALES_OTP.forEach((c, i) => {
+    const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn" + (i ? " ghost" : "");
+    bt.textContent = "Enviar código por " + CH[c]; bt.onclick = () => sendOtp(c); box.append(bt);
+  });
+}
+async function sendOtp(c){
+  $("oe").classList.add("hidden");
+  $("otpch").querySelectorAll("button").forEach(x => x.disabled = true);
+  const { error } = await sb.auth.signInWithOtp({ phone: PEND.p_phone, options: { channel: c } });
+  if(error){
+    $("otpch").querySelectorAll("button").forEach(x => x.disabled = false);
+    $("oe").textContent = /rate|seconds|limit/i.test(error.message || "")
+      ? "Espera un minuto antes de pedir otro código."
+      : "No hemos podido enviar el código. Revisa el número o prueba otro canal.";
+    $("oe").classList.remove("hidden"); return;
+  }
+  OTPC = c;
+  $("otpmsg").textContent = "Te hemos enviado un código por " + CH[c] + " al " + maskPhone(PEND.p_phone) + ".";
+  $("otpch").innerHTML = ""; $("otpcode").classList.remove("hidden"); $("oc").focus(); cooldown();
+}
+function cooldown(){
+  const bt = $("orx"); let t = 60; bt.disabled = true; clearInterval(cdT);
+  const tick = () => { bt.textContent = t > 0 ? "Reenviar código (" + t + " s)" : "Reenviar código"; if(t <= 0){ bt.disabled = false; clearInterval(cdT) } t--; };
+  tick(); cdT = setInterval(tick, 1000);
+}
+$("orx").onclick = () => sendOtp(OTPC);
+$("ov").onclick = async () => {
+  const tok = $("oc").value.replace(/\D/g, "");
+  if(tok.length < 6){ $("oe").textContent = "Escribe el código de 6 dígitos"; $("oe").classList.remove("hidden"); return }
+  $("ov").disabled = true; $("ov").textContent = "Verificando…";
+  const { error } = await sb.auth.verifyOtp({ phone: PEND.p_phone, token: tok, type: "sms" });
+  $("ov").disabled = false; $("ov").textContent = "Verificar y jugar";
+  if(error){ $("oe").textContent = "Código incorrecto o caducado. Revisa el mensaje o pide uno nuevo."; $("oe").classList.remove("hidden"); return }
+  await jugar(PEND, true);
+};
+$("oback").onclick = () => { clearInterval(cdT); $("otp").classList.add("hidden"); $("ff").classList.remove("hidden") };
 
 /* ---------- Panel del organizador (#admin) ---------- */
 async function refreshAdmin(){
@@ -408,7 +491,7 @@ $("cb").onclick = async () => {
 };
 const VERSION = "v4 · premios editables";
 async function openDash(){
-  $("login").classList.add("hidden"); $("dash").classList.remove("hidden"); refreshAdmin(); loadEditor(); setInterval(refreshAdmin, 15000);
+  $("login").classList.add("hidden"); $("dash").classList.remove("hidden"); refreshAdmin(); loadEditor(); loadVer(); setInterval(refreshAdmin, 15000);
   if(!document.getElementById("ver")){ const v = document.createElement("p"); v.id = "ver"; v.className = "fine"; v.textContent = "Versión del panel: " + VERSION; document.querySelector(".admwrap").append(v) }
 }
 $("lb").onclick = async () => {
@@ -492,6 +575,22 @@ $("edsave").onclick = async () => {
     return;
   }
   msg.textContent = "Guardado ✓ (los jugadores verán la ruleta nueva al recargar la página)"; loadEditor();
+};
+
+/* ---------- Interruptor de verificación del teléfono ---------- */
+let VER = false;
+async function loadVer(){
+  const { data } = await sb.rpc("verificacion_activa");
+  VER = data === true;
+  $("vtxt").textContent = VER ? "Activada: se envía un código al móvil" : "Desactivada: se juega sin verificar";
+  $("vbtn").textContent = VER ? "Desactivar" : "Activar";
+}
+$("vbtn").onclick = async () => {
+  $("vbtn").disabled = true;
+  const { error } = await sb.rpc("set_verificacion", {p: !VER});
+  $("vbtn").disabled = false;
+  if(error){ $("vtxt").textContent = "No se pudo cambiar. ¿Ejecutaste el SQL de verificación?"; return }
+  loadVer();
 };
 
 /* ---------- Modo prueba ---------- */
