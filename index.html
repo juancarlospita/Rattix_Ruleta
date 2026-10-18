@@ -136,8 +136,8 @@ body.test{padding-top:32px}
         <div id="otpch"></div>
         <div class="e hidden" id="oe" style="margin-top:12px"></div>
         <div id="otpcode" class="hidden">
-          <label class="l" for="oc" style="margin-top:6px">Código de 6 dígitos</label>
-          <input class="i otpi" id="oc" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="······">
+          <label class="l" for="oc" style="margin-top:6px">Código recibido</label>
+          <input class="i otpi" id="oc" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="······">
           <button type="button" class="btn" id="ov">Verificar y jugar</button>
           <button type="button" class="btn ghost" id="orx" disabled>Reenviar código</button>
         </div>
@@ -462,7 +462,7 @@ function cooldown(){
 $("orx").onclick = () => sendOtp(OTPC);
 $("ov").onclick = async () => {
   const tok = $("oc").value.replace(/\D/g, "");
-  if(tok.length < 6){ $("oe").textContent = "Escribe el código de 6 dígitos"; $("oe").classList.remove("hidden"); return }
+  if(tok.length < 4){ $("oe").textContent = "Escribe el código que has recibido"; $("oe").classList.remove("hidden"); return }
   $("ov").disabled = true; $("ov").textContent = "Verificando…";
   const { error } = await sb.auth.verifyOtp({ phone: PEND.p_phone, token: tok, type: "sms" });
   $("ov").disabled = false; $("ov").textContent = "Verificar y jugar";
