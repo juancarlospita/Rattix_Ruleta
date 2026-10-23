@@ -131,7 +131,7 @@ body.test{padding-top:32px}
         <p class="fine">Una partida por persona: el email y el teléfono no pueden repetirse.</p>
       </div>
       <div id="otp" class="hidden" role="group" aria-label="Verificación del teléfono">
-        <h2 class="otph">Verifica tu teléfono</h2>
+        <h2 class="otph" id="otph">Verifica tus datos</h2>
         <p id="otpmsg"></p>
         <div id="otpch"></div>
         <div class="e hidden" id="oe" style="margin-top:12px"></div>
@@ -165,8 +165,12 @@ body.test{padding-top:32px}
   </div>
   <div id="dash" class="hidden">
     <div class="panel" style="margin-top:22px"><div class="num" id="aPlayed">0</div><div class="h"><span>personas han jugado · </span><b id="aWins">0</b> con premio</div></div>
-    <div class="panel"><b>Verificación del teléfono</b>
-      <div class="row" style="border:0"><span id="vtxt">Comprobando…</span><button class="btn sm" id="vbtn" type="button">…</button></div></div>
+    <div class="panel"><b>Verificación de los datos</b>
+      <div class="f" style="margin:10px 0 4px"><select class="i" id="vsel" aria-label="Modo de verificación">
+        <option value="off">Desactivada: se juega sin verificar</option>
+        <option value="telefono">Teléfono: código por SMS o WhatsApp</option>
+        <option value="email">Email: código por correo</option></select></div>
+      <div class="h" id="vtxt"></div></div>
     <div class="panel"><b>Canjear premio</b>
       <div class="f" style="margin:10px 0"><input class="i" id="cd" placeholder="Código de 5 caracteres" maxlength="5" autocapitalize="characters" style="text-transform:uppercase;letter-spacing:.1em"></div>
       <button class="btn" id="cb">Buscar código</button>
@@ -390,15 +394,15 @@ $("f").addEventListener("submit", async ev => {
   const args = { p_name: $("n").value.trim(), p_email: normEmail($("e").value), p_phone: normPhone($("t").value), p_marketing: $("c2").checked };
   if(MODO_PRUEBA){   /* datos únicos y marcados "[PRUEBA]" para poder borrarlos después */
     args.p_name = "[PRUEBA] " + args.p_name;
-    args.p_email = args.p_email.replace("@", "+p" + rndDigits(6) + "@");
+    args.p_email = args.p_email.replace("@", rndDigits(6) + "@");
     args.p_phone = "+346" + rndDigits(8);
   }
-  const verif = (await sb.rpc("verificacion_activa")).data === true;
-  if(verif){
+  const modo = (await sb.rpc("modo_verificacion")).data || "off";
+  if(modo !== "off"){
     const chk = await sb.rpc("puede_jugar", {p_email: args.p_email, p_phone: args.p_phone});   /* antes de gastar un SMS */
     b.disabled = false; b.textContent = "Quiero jugar";
     if(chk.data && chk.data.ok === false) return marcarDuplicado(chk.data.motivo === "telefono");
-    PEND = args; return showOtp();
+    PEND = args; PMODO = modo; return showOtp();
   }
   await jugar(args, false);
 });
@@ -418,22 +422,26 @@ async function jugar(args, conSesion){
   }
   $("otp").classList.add("hidden"); $("ff").classList.remove("hidden");
   if(error && error.code === "23505") return marcarDuplicado(/phone/.test(error.message));
-  $("gen").textContent = /telefono_no_verificado/.test((error && error.message) || "")
+  $("gen").textContent = /(telefono|email)_no_verificado/.test((error && error.message) || "")
     ? "No hemos podido verificar tu teléfono. Recarga la página e inténtalo de nuevo."
     : "No hemos podido preparar tu partida. Inténtalo de nuevo o avisa al equipo.";
   $("gen").classList.remove("hidden");
 }
 
 /* ---------- Verificación del teléfono (SMS / WhatsApp) ---------- */
-let PEND = null, OTPC = "sms", cdT = null;
+let PEND = null, PMODO = "telefono", OTPC = "sms", cdT = null;
 const CH = {sms:"SMS", whatsapp:"WhatsApp"};
 const maskPhone = p => p.slice(0,3) + " ••• •• " + p.slice(-2);
+const maskEmail = e => { const [u, d] = e.split("@"); return u.slice(0,1) + "•••@" + d };
 function showOtp(){
+  const mail = PMODO === "email";
   $("ff").classList.add("hidden"); $("otp").classList.remove("hidden");
   $("otpcode").classList.add("hidden"); $("oe").classList.add("hidden"); $("oc").value = "";
-  $("otpmsg").textContent = "Vamos a comprobar que " + maskPhone(PEND.p_phone) + " es tu número real.";
+  $("otph").textContent = mail ? "Verifica tu correo" : "Verifica tu teléfono";
+  $("otpmsg").textContent = mail ? "Vamos a comprobar que " + maskEmail(PEND.p_email) + " es tu correo real."
+                                 : "Vamos a comprobar que " + maskPhone(PEND.p_phone) + " es tu número real.";
   const box = $("otpch"); box.innerHTML = "";
-  if(CANALES_OTP.length === 1){ sendOtp(CANALES_OTP[0]); return }
+  if(mail || CANALES_OTP.length === 1){ sendOtp(mail ? "email" : CANALES_OTP[0]); return }
   CANALES_OTP.forEach((c, i) => {
     const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn" + (i ? " ghost" : "");
     bt.textContent = "Enviar código por " + CH[c]; bt.onclick = () => sendOtp(c); box.append(bt);
@@ -442,16 +450,24 @@ function showOtp(){
 async function sendOtp(c){
   $("oe").classList.add("hidden");
   $("otpch").querySelectorAll("button").forEach(x => x.disabled = true);
-  const { error } = await sb.auth.signInWithOtp({ phone: PEND.p_phone, options: { channel: c } });
+  const { error } = c === "email"
+    ? await sb.auth.signInWithOtp({ email: PEND.p_email, options: { shouldCreateUser: true } })
+    : await sb.auth.signInWithOtp({ phone: PEND.p_phone, options: { channel: c } });
   if(error){
     $("otpch").querySelectorAll("button").forEach(x => x.disabled = false);
     $("oe").textContent = /rate|seconds|limit/i.test(error.message || "")
       ? "Espera un minuto antes de pedir otro código."
-      : "No hemos podido enviar el código. Revisa el número o prueba otro canal.";
-    $("oe").classList.remove("hidden"); return;
+      : (c === "email" ? "No hemos podido enviar el código. Revisa que el email esté bien escrito."
+                       : "No hemos podido enviar el código. Revisa el número o prueba otro canal.");
+    if(/debug/.test(location.search)) $("oe").textContent += " [" + (error.status || "") + " " + (error.code || "") + " " + (error.message || "") + "]";
+    $("oe").classList.remove("hidden");
+    if(c === "email") $("otpch").innerHTML = '<button type="button" class="btn" id="oretry">Reintentar</button>', $("oretry").onclick = () => sendOtp("email");
+    return;
   }
   OTPC = c;
-  $("otpmsg").textContent = "Te hemos enviado un código por " + CH[c] + " al " + maskPhone(PEND.p_phone) + ".";
+  $("otpmsg").textContent = c === "email"
+    ? "Te hemos enviado un código a " + maskEmail(PEND.p_email) + ". Mira también la carpeta de spam."
+    : "Te hemos enviado un código por " + CH[c] + " al " + maskPhone(PEND.p_phone) + ".";
   $("otpch").innerHTML = ""; $("otpcode").classList.remove("hidden"); $("oc").focus(); cooldown();
 }
 function cooldown(){
@@ -464,7 +480,9 @@ $("ov").onclick = async () => {
   const tok = $("oc").value.replace(/\D/g, "");
   if(tok.length < 4){ $("oe").textContent = "Escribe el código que has recibido"; $("oe").classList.remove("hidden"); return }
   $("ov").disabled = true; $("ov").textContent = "Verificando…";
-  const { error } = await sb.auth.verifyOtp({ phone: PEND.p_phone, token: tok, type: "sms" });
+  const { error } = OTPC === "email"
+    ? await sb.auth.verifyOtp({ email: PEND.p_email, token: tok, type: "email" })
+    : await sb.auth.verifyOtp({ phone: PEND.p_phone, token: tok, type: "sms" });
   $("ov").disabled = false; $("ov").textContent = "Verificar y jugar";
   if(error){ $("oe").textContent = "Código incorrecto o caducado. Revisa el mensaje o pide uno nuevo."; $("oe").classList.remove("hidden"); return }
   await jugar(PEND, true);
@@ -578,19 +596,14 @@ $("edsave").onclick = async () => {
 };
 
 /* ---------- Interruptor de verificación del teléfono ---------- */
-let VER = false;
 async function loadVer(){
-  const { data } = await sb.rpc("verificacion_activa");
-  VER = data === true;
-  $("vtxt").textContent = VER ? "Activada: se envía un código al móvil" : "Desactivada: se juega sin verificar";
-  $("vbtn").textContent = VER ? "Desactivar" : "Activar";
+  const { data } = await sb.rpc("modo_verificacion");
+  $("vsel").value = data || "off"; $("vtxt").textContent = "";
 }
-$("vbtn").onclick = async () => {
-  $("vbtn").disabled = true;
-  const { error } = await sb.rpc("set_verificacion", {p: !VER});
-  $("vbtn").disabled = false;
-  if(error){ $("vtxt").textContent = "No se pudo cambiar. ¿Ejecutaste el SQL de verificación?"; return }
-  loadVer();
+$("vsel").onchange = async () => {
+  const { error } = await sb.rpc("set_modo_verificacion", {p: $("vsel").value});
+  $("vtxt").textContent = error ? "No se pudo cambiar. ¿Ejecutaste el SQL de verificación?" : "Guardado ✓";
+  if(error) loadVer();
 };
 
 /* ---------- Modo prueba ---------- */
